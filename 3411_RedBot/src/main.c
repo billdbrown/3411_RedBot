@@ -11,9 +11,9 @@ Functionality:
 #define F_CPU			16000000UL
 
 //Sensor pins
-#define LEFT_SENSOR		0
+#define RIGHT_SENSOR	0
 #define CENTER_SENSOR	1
-#define RIGHT_SENSOR	2
+#define LEFT_SENSOR		2
 
 //Motor pins
 #define LEFT_MOTOR		0
@@ -64,6 +64,7 @@ int adc_conv(void);
 
 // Sensor Operation Functions
 void sensor_select(int sens_mot_sel);
+uint8_t determine_error(void);
 
 // Motor Operation Functions
 void motor_mode_select(int mode_select);
@@ -169,7 +170,7 @@ int adc_conv(void)
 	uint16_t sample_val_int = ADC;							//store the sample in a variable
 	
 
-	return sample_val_int;								//return as an int
+	return sample_val_int;									//return as an int
 }
 
 /*
@@ -177,33 +178,38 @@ Sensor Motor Control
 
 MUX ENCODING
 	LEFT SENSOR		:	MUX1
-	CENTER SENSOR	:	MUX2, MUX1
-	RIGHT SENSOR	:	MUX1, MUX0
+	CENTER SENSOR	:	MUX1, MUX0
+	RIGHT SENSOR	:	MUX2, MUX1
+	
+MUXes are set one state ahead, looking into why.
 */
 void sensor_select(int sens_mot_sel)
 {
 	switch(sens_mot_sel)
 	{
+				
+		case RIGHT_SENSOR:
+			adc_clear();
+			ADMUX |= (1<<MUX1) | (1<<MUX0);				// Activates the Center MUX - Reason unknown
+			right_sensor = adc_conv();
+			printf("Right sensor: %d \n", right_sensor);
+			break;
+			
+		case CENTER_SENSOR:
+			adc_clear();
+			ADMUX |= (1<<MUX1);							// Activates the Left MUX - Reason unknown
+			center_sensor = adc_conv();
+			printf("Center sensor: %d \n", center_sensor);
+			break;
+						
 		case LEFT_SENSOR:
 			adc_clear();
-			ADMUX |= (1<<MUX1);
+			ADMUX |= (1<<MUX2) | (1<<MUX1);				// Activates the Right MUX - Reason unknown
 			left_sensor = adc_conv();
 			printf("Left sensor: %d \n", left_sensor);
 			break;
 		
-		case CENTER_SENSOR:
-			adc_clear();
-			ADMUX |= (1<<MUX2) | (1<<MUX1);
-			center_sensor = adc_conv();
-			printf("Center sensor: %d \n", center_sensor);
-			break;
-		
-		case RIGHT_SENSOR:
-			adc_clear();
-			ADMUX |= (1<<MUX1) | (1<<MUX0);
-			right_sensor = adc_conv();
-			printf("Right sensor: %d \n", right_sensor);
-			break;
+
 		
 		default:
 			printf("ERROR: State ID %d not recognized \n", sens_mot_sel);
@@ -211,18 +217,41 @@ void sensor_select(int sens_mot_sel)
 	}
 }
 
-int line_follow(void)
+// Determine the lines location relative to the sensors.
+uint8_t determine_error(void)
 {
-	switch(detect_case)
-	{
-		
-	}
+	uint8_t errors[3];
+	errors[LEFT_SENSOR] = (int) (left_sensor > LINE_THRESHOLD);
+	errors[CENTER_SENSOR] = (int) (center_sensor > LINE_THRESHOLD);
+	errors[RIGHT_SENSOR] = (int) (right_sensor > LINE_THRESHOLD);
+	if (errors[LEFT_SENSOR] && errors[CENTER_SENSOR] && errors[RIGHT_SENSOR])	// [ 1 1 1 ]
+		return ERROR_LEFT_CENTER_RIGHT;
+	if (errors[LEFT_SENSOR] && errors[CENTER_SENSOR])							// [ 1 1 0 ]
+		return ERROR_LEFT_CENTER;
+	if (errors[LEFT_SENSOR] && errors[RIGHT_SENSOR])							// [ 1 0 1 ]
+		return ERROR_LEFT_RIGHT;
+	if (errors[LEFT_SENSOR])													// [ 1 0 0 ]
+		return ERROR_LEFT;
+	if (errors[CENTER_SENSOR] && errors[RIGHT_SENSOR])							// [ 0 1 1 ]
+		return ERROR_CENTER_RIGHT;
+	if (errors[CENTER_SENSOR])													// [ 0 1 0 ]
+		return ERROR_CENTER;
+	if (errors[RIGHT_SENSOR])													// [ 0 0 1 ]
+		return ERROR_RIGHT;
+	return ERROR_NONE;															// [ 0 0 0 ]
 }
-
-int PID(int error)
-{
-	
-}
+//int line_follow(void)
+//{
+	//switch(detect_case)
+	//{
+		//case 
+	//}
+//}
+//
+//int PID(int error)
+//{
+	//
+//}
 
 /*
 Motor Operating Mode Selector
@@ -267,21 +296,23 @@ void right_motor_en(int en)
 int main (void)
 {	
 	init_all();
-	
-	//int sens_mot_sel = 0;
+	int sens_mot_sel = 0;
 	motor_mode_select(MODE_FORWARD);
 	while(1)
 	{
-		//sensor_select(sens_mot_sel);
-		//sens_mot_sel++;
-		//
-		//if(sens_mot_sel > 2)
-		//{
-			//printf("\n");
-			//sens_mot_sel = 0;
-		//}
-		//
+		sensor_select(sens_mot_sel);
+		sens_mot_sel++;
+		
+		if(sens_mot_sel > 2)
+		{
+			printf("\n%d\n", determine_error());
+			
 
-		//_delay_ms(300);
+			sens_mot_sel = 0;
+			_delay_ms(500);
+		}
+		
+
+
 	}
 }
