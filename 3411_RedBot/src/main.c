@@ -34,33 +34,44 @@ Functionality:
 #include <avr/interrupt.h>
 #include <util/delay.h>
 #include "uart.h"
+#include "redbot_params.h"
 
 #define START_SPEED		0.05
 
 //UART stream
 FILE uart_str = FDEV_SETUP_STREAM(uart_putchar, uart_getchar ,_FDEV_SETUP_RW);
 
-//Global variables
+/*
+GLOBAL VARIABLE DEFINITIONS
+*/
 //Sensors
 volatile unsigned int left_sensor = 0;
 volatile unsigned int center_sensor = 0;
 volatile unsigned int right_sensor = 0;
 
-//Motors
+/*
+FUNCTION DEFINITIONS
+*/
+// Initializers
 void init_all(void);
-void ADC_init(void);
+void adc_init(void);
 void timer0_init(void);
 void timer2_init(void);
 
-void ADC_clear(void);
-int ADC_conv(void);
+// Analog to Digital Conversion Functions
+void adc_clear(void);
+int adc_conv(void);
+
+// Sensor Operation Functions
 void sensor_select(int sens_mot_sel);
+
+// Motor Operation Functions
 void motor_mode_select(int mode_select);
-
-void debug_motor(int enabled);
-
 void left_motor_en(int en);
 void right_motor_en(int en);
+
+// Debug Functions
+
 
 /* 
 Interrupt Service Routines
@@ -84,51 +95,58 @@ ISR(TIMER2_COMPB_vect)
 {
 	right_motor_en(DISABLED);
 }
-void ADC_init(void)
+
+void adc_init(void)
 {
 	ADMUX |= (1<<REFS0);
 	ADCSRA |= (1<<ADEN) | (1<<ADATE) | (1<<ADPS2) | (1<<ADPS1) | (1<<ADPS0); //Enable the ADC in Free-Running mode with a fadc = 125 kHz
 }
 
-void ADC_clear(void)
+void adc_clear(void)
 {
 	ADMUX &= ~(1<<MUX3) & ~(1<<MUX2) & ~(1<<MUX1) & ~(1<<MUX0); //Clear ADC MUX
 }
 
-// Initialize TIMER0 in Fast PWM Mode
+// Initialize TIMER0 & TIMER2 in Fast PWM Mode
 // PWM frequency set to match ADC sample rate
-//		Frequency = Prescaler * (OCR0A+1) / Clock Speed
-//		125kHz = 1 * OCR0A+1 / 16 MHz
-//		OCR0A = 127
+//		Frequency = Prescaler * (OCRnA+1) / Clock Speed
+//		125kHz = 1 * OCRnA+1 / 16 MHz
+//		OCRnA = 127
 // Yields 125kHz frequency, 8us period
 void timer0_init(void)
 {
-	TCCR0A |= (1<<WGM01) | (1<<WGM00); // Fast PWM Mode
-	TCCR0B |= (1<<WGM02) | (1<<CS01);  // Fast PWM Mode, Prescaler off
-	OCR0A = 127;  // Derived from equation for 8us period
+	TCCR0A |= (1<<WGM01) | (1<<WGM00);	// Fast PWM Mode
+	TCCR0B |= (1<<WGM02) | (1<<CS01) | (1<<CS00);	// Fast PWM Mode, Prescaler of 64
+	OCR0A = 127;						// Derived from equation for 8us period
 	
-	TIMSK0 |= (1<<OCIE0A)|(1<<OCIE0B); // Enable interrupts for both rising and falling edge
+	TIMSK0 |= (1<<OCIE0A)|(1<<OCIE0B);	// Enable interrupts for both rising and falling edge
 	
 	// Define Initial PWM
-	OCR0B = START_SPEED * OCR0A;
+	int leftDuty = OCR0A;
+	OCR0B = 0.5 * leftDuty;
 }
 
 void timer2_init(void)
 {
 	TCCR2A |= (1<<WGM21) | (1<<WGM20);	// Fast PWM Mode
-	TCCR2B |= (1<<WGM22) | (1<<CS21);	// Fast PWM Mode, Prescaler off
+	TCCR2B |= (1<<WGM22) | (1<<CS21) | (1<<CS20);	// Fast PWM Mode, Prescaler of 32
 	OCR2A = 127;
 	
 	TIMSK2 |= (1<<OCIE2A)|(1<<OCIE2B);	// Enable interrupts for both rising and falling edge
 	
 	// Define Initial PWM
-	OCR2B = OCR2A;
+	int rightDuty = 0.45 * OCR2A;
+	OCR2B = rightDuty;
 }
+
+//0.15 left, 0 right is full speed, just about straight
+//0.5 left, 0.45 right is half speed, just about straight
+
 void init_all(void)
 {
 	board_init();
-	ADC_clear();
-	ADC_init();
+	adc_clear();
+	adc_init();
 	uart_init();
 	
 	// Timers
@@ -144,7 +162,7 @@ void init_all(void)
 	printf("Hello! \n\n");
 }
 
-int ADC_conv(void)
+int adc_conv(void)
 {
 	ADCSRA |= (1<<ADSC);									//start conversion
 	while(!(ADCSRA &(1<<ADSC)));							//wait for it to complete
@@ -167,23 +185,23 @@ void sensor_select(int sens_mot_sel)
 	switch(sens_mot_sel)
 	{
 		case LEFT_SENSOR:
-			ADC_clear();
+			adc_clear();
 			ADMUX |= (1<<MUX1);
-			left_sensor = ADC_conv();
+			left_sensor = adc_conv();
 			printf("Left sensor: %d \n", left_sensor);
 			break;
 		
 		case CENTER_SENSOR:
-			ADC_clear();
+			adc_clear();
 			ADMUX |= (1<<MUX2) | (1<<MUX1);
-			center_sensor = ADC_conv();
+			center_sensor = adc_conv();
 			printf("Center sensor: %d \n", center_sensor);
 			break;
 		
 		case RIGHT_SENSOR:
-			ADC_clear();
+			adc_clear();
 			ADMUX |= (1<<MUX1) | (1<<MUX0);
-			right_sensor = ADC_conv();
+			right_sensor = adc_conv();
 			printf("Right sensor: %d \n", right_sensor);
 			break;
 		
@@ -191,6 +209,19 @@ void sensor_select(int sens_mot_sel)
 			printf("ERROR: State ID %d not recognized \n", sens_mot_sel);
 			break;
 	}
+}
+
+int line_follow(void)
+{
+	switch(detect_case)
+	{
+		
+	}
+}
+
+int PID(int error)
+{
+	
 }
 
 /*
@@ -202,7 +233,7 @@ void motor_mode_select(int mode_select)
 {
 	switch(mode_select)
 	{
-		case MODE_BACKWARD:
+		case MODE_FORWARD:
 			PORTD |= (1<<PORTD4);		// Left Motor	: CCW	: IN1 L IN2 H
 			PORTD |= (1<<PORTD7);		// Right Motor  : CW	: IN1 H IN2 L
 			break;
@@ -210,7 +241,7 @@ void motor_mode_select(int mode_select)
 			PORTD |= (1<<PORTD4);		// Left Motor	: CCW	: IN1 L IN2 H
 			PORTB |= (1<<PORTB0);		// Right Motor	: CCW	: IN1 L	IN2 H
 			break;
-		case MODE_FORWARD:
+		case MODE_BACKWARD:
 			PORTD |= (1<<PORTD2);		// Left Motor	: CW	: IN1 H IN2 L
 			PORTB |= (1<<PORTB0);		// Right Motor	: CCW	: IN1 L	IN2 H			
 			break;
@@ -233,42 +264,24 @@ void right_motor_en(int en)
 	PORTD = (PORTD & ~(1<<PORTD6)) | ((1 & en)<<PORTD6);
 }
 
-// Enabled both motors at 100% duty cycle
-void debug_motor(int enabled)
-{
-	switch(enabled)
-	{
-		case ENABLED:
-			PORTD |= (1<<PORTD5);
-			PORTD |= (1<<PORTD6);
-			break;
-		case DISABLED:
-			PORTD &= ~(1<<PORTD5);
-			PORTD &= ~(1<<PORTD6);
-			break;
-		default:
-			PORTD |= (1<<PORTD5);
-			PORTD |= (1<<PORTD6);
-			break;
-	}
-}
 int main (void)
 {	
 	init_all();
 	
-	int sens_mot_sel = 0;
+	//int sens_mot_sel = 0;
 	motor_mode_select(MODE_FORWARD);
 	while(1)
 	{
-		sensor_select(sens_mot_sel);
-		sens_mot_sel++;
-		
-		if(sens_mot_sel > 2)
-		{
-			printf("\n");
-			sens_mot_sel = 0;
-		}
-		
-		_delay_ms(300);
+		//sensor_select(sens_mot_sel);
+		//sens_mot_sel++;
+		//
+		//if(sens_mot_sel > 2)
+		//{
+			//printf("\n");
+			//sens_mot_sel = 0;
+		//}
+		//
+
+		//_delay_ms(300);
 	}
 }
